@@ -63,7 +63,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/products/amazon",
+        "url": "http://YOUR_DATA_SERVER:8000/api/products/amazon",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -155,7 +155,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/trends/instagram",
+        "url": "http://YOUR_DATA_SERVER:8000/api/trends/instagram",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -184,7 +184,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/trends/pinterest",
+        "url": "http://YOUR_DATA_SERVER:8000/api/trends/pinterest",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -207,7 +207,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/trends/blogs",
+        "url": "http://YOUR_DATA_SERVER:8000/api/trends/blogs",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -236,7 +236,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/trends/blogs",
+        "url": "http://YOUR_DATA_SERVER:8000/api/trends/blogs",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [

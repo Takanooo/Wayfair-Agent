@@ -40,7 +40,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/dashboard/template",
+        "url": "http://YOUR_DATA_SERVER:8000/api/dashboard/template",
         "options": {
           "response": {
             "response": {

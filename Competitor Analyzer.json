@@ -1,5 +1,5 @@
 {
-  "name": "CompetitorAnalyzer",
+  "name": "My workflow",
   "nodes": [
     {
       "parameters": {
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/products/wayfair",
+        "url": "http://YOUR_DATA_SERVER:8000/api/products/wayfair",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -75,7 +75,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/products/amazon",
+        "url": "http://YOUR_DATA_SERVER:8000/api/products/amazon",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
@@ -133,7 +133,7 @@
     },
     {
       "parameters": {
-        "url": "http://34.196.186.128:8000/api/products/walmart",
+        "url": "http://YOUR_DATA_SERVER:8000/api/products/walmart",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
