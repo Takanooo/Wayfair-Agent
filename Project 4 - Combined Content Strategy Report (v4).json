@@ -1,0 +1,521 @@
+{
+  "name": "Project 4 - Combined Content Strategy Report (v4)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "acc94266-935f-421c-b73c-4104b998292c",
+        "formTitle": "Project 4: Upload Your Reports",
+        "formDescription": "Upload your Project 2 (Market Analysis) and Project 3 (Competitor Analysis) HTML reports to generate a comprehensive content strategy.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Product Category",
+              "placeholder": "e.g., Area Rug, Table Lamp, Throw Pillow",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Focus Area",
+              "placeholder": "e.g., Natural & Sustainable, Modern Minimalist"
+            },
+            {
+              "fieldLabel": "P2 Market Analysis Report",
+              "fieldType": "file",
+              "acceptFileTypes": ".html",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "P3 Competitor Analysis Report",
+              "fieldType": "file",
+              "acceptFileTypes": ".html",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "ababbdad-ae71-4350-965e-aec6fb1a3e94",
+      "name": "Upload Form",
+      "webhookId": "acc94266-935f-421c-b73c-4104b998292c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// EXTRACT FILES  (rewritten)\n// n8n's Form Trigger stores uploaded files in the item's BINARY\n// store, not in json['Field Label'].  The old version only looked\n// at json, so p2_content / p3_content were always empty strings and\n// the AI had nothing real to work with.\n// ============================================================\n\nconst helpers = this.helpers;\nconst item = $input.first();\nconst form = item.json || {};\nconst binary = item.binary || {};\n\nconst category = form['Product Category'] || form.category || 'Area Rug';\nconst focus = form['Focus Area'] || form.focus || '';\n\n// ---- locate the two binary properties, whatever n8n named them ----\nconst binKeys = Object.keys(binary);\nconst norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');\n\nfunction findKey(hints, exclude) {\n  for (const h of hints) {\n    const hn = norm(h);\n    const hit = binKeys.find(k => k !== exclude && norm(k).includes(hn));\n    if (hit) return hit;\n  }\n  return null;\n}\n\nlet p2Key = findKey(['P2 Market Analysis Report', 'p2market', 'marketanalysis', 'trend', 'p2']);\nlet p3Key = findKey(['P3 Competitor Analysis Report', 'p3competitor', 'competitoranalysis', 'competitor', 'p3'], p2Key);\n\n// positional fallback (n8n sometimes names them data / data_1)\nif (!p2Key && binKeys.length > 0) p2Key = binKeys[0];\nif (!p3Key) p3Key = binKeys.find(k => k !== p2Key) || null;\n\nasync function readBinary(propName) {\n  if (!propName) return '';\n  // preferred path — works with both in-memory and filesystem binary storage\n  try {\n    const buf = await helpers.getBinaryDataBuffer(0, propName);\n    if (buf) return buf.toString('utf8');\n  } catch (e) { /* fall through */ }\n  // fallback — base64 held directly on the item\n  const b = binary[propName];\n  if (b && b.data) {\n    try { return Buffer.from(b.data, 'base64').toString('utf8'); } catch (e) { /* noop */ }\n  }\n  return '';\n}\n\nlet p2Raw = await readBinary(p2Key);\nlet p3Raw = await readBinary(p3Key);\n\n// last-resort: some setups DO pass the file through json as a string\nif (!p2Raw && typeof form['P2 Market Analysis Report'] === 'string') p2Raw = form['P2 Market Analysis Report'];\nif (!p3Raw && typeof form['P3 Competitor Analysis Report'] === 'string') p3Raw = form['P3 Competitor Analysis Report'];\n\n// ---- HTML -> readable text, keeping headings and list structure ----\nconst htmlToText = (html) => {\n  if (!html) return '';\n  return String(html)\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')\n    .replace(/<head[\\s\\S]*?<\\/head>/gi, ' ')\n    .replace(/<h([1-6])[^>]*>/gi, '\\n\\n## ')\n    .replace(/<li[^>]*>/gi, '\\n- ')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/(h[1-6]|p|div|section|tr|li|ul|ol|table)>/gi, '\\n')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/gi, ' ')\n    .replace(/&amp;/gi, '&')\n    .replace(/&lt;/gi, '<')\n    .replace(/&gt;/gi, '>')\n    .replace(/&quot;/gi, '\"')\n    .replace(/&#39;/gi, \"'\")\n    .replace(/[ \\t]{2,}/g, ' ')\n    .replace(/\\n[ \\t]+/g, '\\n')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n};\n\n// ---- pull out concrete numbers so the AI can cite real figures ----\nconst extractStats = (t) => {\n  const pcts = (t.match(/\\b\\d{1,3}(?:\\.\\d+)?\\s?%/g) || []);\n  const prices = (t.match(/\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?(?:\\s?[-\\u2013to]+\\s?\\$?\\d[\\d,]*(?:\\.\\d{2})?)?/g) || []);\n  const ratings = (t.match(/\\b[1-5]\\.\\d\\s?(?:stars?|\\/\\s?5)/gi) || []);\n  const uniq = (a) => Array.from(new Set(a.map(s => s.trim())));\n  return {\n    percentages: uniq(pcts).slice(0, 30),\n    prices: uniq(prices).slice(0, 30),\n    ratings: uniq(ratings).slice(0, 10)\n  };\n};\n\nconst p2Text = htmlToText(p2Raw).slice(0, 14000);\nconst p3Text = htmlToText(p3Raw).slice(0, 14000);\n\nconst p2Stats = extractStats(p2Text);\nconst p3Stats = extractStats(p3Text);\n\n// ---- honest reporting of what actually made it through ----\nconst missing = [];\nif (p2Text.length < 200) missing.push('P2 Market / Trend Analysis');\nif (p3Text.length < 200) missing.push('P3 Competitor Analysis');\n\nconst source_status = {\n  p2_chars: p2Text.length,\n  p3_chars: p3Text.length,\n  p2_binary_key: p2Key,\n  p3_binary_key: p3Key,\n  binary_keys_seen: binKeys,\n  missing: missing,\n  ok: missing.length === 0\n};\n\nreturn [{\n  json: {\n    category,\n    focus,\n    p2_content: p2Text,\n    p3_content: p3Text,\n    p2_stats: p2Stats,\n    p3_stats: p3Stats,\n    source_status\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "2197facb-38c9-45a4-8176-0d92a008306d",
+      "name": "Extract Files"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CATEGORY: {{ $json.category }}\nFOCUS AREA: {{ $json.focus }}\nSOURCE FILES MISSING: {{ JSON.stringify($json.source_status.missing) }}\n\n=== SOURCE: MARKET / TREND ANALYSIS REPORT (P2) ===\n{{ $('Extract Files').first().json.p2_content }}\n\n=== SOURCE: COMPETITOR ANALYSIS REPORT (P3) ===\n{{ $('Extract Files').first().json.p3_content }}\n\n=== FIGURES ALREADY PULLED FROM THOSE REPORTS (cite these; do not invent others) ===\nMarket percentages: {{ JSON.stringify($('Extract Files').first().json.p2_stats.percentages) }}\nMarket prices: {{ JSON.stringify($('Extract Files').first().json.p2_stats.prices) }}\nCompetitor percentages: {{ JSON.stringify($('Extract Files').first().json.p3_stats.percentages) }}\nCompetitor prices: {{ JSON.stringify($('Extract Files').first().json.p3_stats.prices) }}\n\nReturn the JSON object described in your instructions. Nothing else.",
+        "options": {
+          "systemMessage": "=You are a senior content strategist at Wayfair, writing the opening of a content strategy report for a category team.\n\nTASK: Produce the report foundation - the headline metrics, the evidence base, and the executive summary.\n\nEVIDENCE RULES (non-negotiable):\n- Draw only on the two reports supplied in the user message. No outside knowledge, no assumed figures.\n- Every number you cite must actually appear in the source text. The extracted-figures list is there so you can find real ones quickly.\n- If the sources are thin or empty, say so plainly and scale back your claims. Never invent data to fill out the shape.\n\nOUTPUT RULES (non-negotiable):\n- Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no trailing commentary.\n- Use double quotes throughout. Do not use trailing commas.\n- Respect every length limit below. They exist so the response never gets truncated mid-object.\n\nRETURN EXACTLY THIS SHAPE:\n{\n  \"key_metrics\": [\n    {\"value\": \"28%\", \"label\": \"YoY growth\", \"source\": \"P2\"}\n  ],\n  \"data_foundation\": {\n    \"p2_insights\": [\"...\", \"...\", \"...\", \"...\"],\n    \"p3_insights\": [\"...\", \"...\", \"...\", \"...\"]\n  },\n  \"executive_summary\": \"...\"\n}\n\nLIMITS:\n- key_metrics: exactly 4 items. \"value\" max 12 characters. \"label\" max 34 characters. \"source\" is \"P2\" or \"P3\".\n- p2_insights / p3_insights: exactly 4 each, one sentence, max 190 characters each, each naming a concrete figure, material, price band or competitor.\n- executive_summary: 3 short paragraphs separated by \\n\\n, 240 words total maximum. Paragraph 1: the opportunity and the numbers behind it. Paragraph 2: what competitors are and aren't doing. Paragraph 3: what that means for our content.\n\n=== WAYFAIR BRAND VOICE — APPLIES TO EVERY WORD YOU WRITE ===\n\nWrite as Wayfair. Three qualities define the voice:\n\n1. FRIENDLY — Warm, human, plain-spoken. Write like a knowledgeable colleague sitting next to the reader, not a consulting deck. Use contractions (\"you'll\", \"it's\", \"we're\"). Address the reader as \"you\" and Wayfair as \"we\". Explain jargon the first time you use it.\n\n2. PROFESSIONAL — Every claim is anchored to something real: a number, a price band, a material, a competitor listing, an observation from the data you were given. Confident but never boastful. Banned hype words: game-changing, revolutionary, unlock, leverage, synergy, supercharge, disrupt, must-have, seamless, cutting-edge, world-class.\n\n3. GUIDING, NOT DEMANDING — Offer direction the reader can act on, and show the reasoning so they can decide for themselves. You are handing someone a map, not orders.\n   USE: \"Consider leading with...\", \"It's worth testing...\", \"The data points toward...\", \"You might start with...\", \"One option is...\", \"If X matters most to you, then...\"\n   AVOID: \"You must\", \"Immediately\", \"Failure to act will...\", \"It is critical that you\", \"Never\", \"Always\", any ultimatum or scare framing.\n\nSTYLE RULES:\n- Keep sentences under ~25 words. Keep paragraphs to 2-4 sentences.\n- Give the \"why\" before the \"what\" so the reader can follow the logic.\n- Be specific over generic: name the number, the material, the price band, the competitor.\n- No exclamation marks in analysis prose. No rhetorical questions. No dramatic one-line paragraphs.\n- Be honest about confidence. Say \"early signal\" or \"based on 40 listings\" rather than overstating a thin sample.\n- Never invent a statistic. If the data does not support a number, describe the direction qualitatively instead.\n\nCRITICAL: This voice guidance changes the WORDING ONLY. Do not alter the required output format, structure, JSON keys, HTML tags, or class names specified above. Return exactly the structure requested.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        448,
+        0
+      ],
+      "id": "174d6bc7-1c43-4f37-b4b5-e76d02e3a61e",
+      "name": "Foundation Generator"
+    },
+    {
+      "parameters": {
+        "model": "mistral-small-latest",
+        "options": {
+          "maxTokens": 2600,
+          "temperature": 0.4
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        432,
+        224
+      ],
+      "id": "71c532ea-e5cf-419c-9e78-0cc85f8889f1",
+      "name": "Mistral - Foundation",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "sK3ROiCiSymgCqpD",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        0
+      ],
+      "id": "96a74e27-b179-47a3-8932-256164a2b34f",
+      "name": "Wait 1",
+      "webhookId": "eaa5744c-0da8-4653-9d92-efc0600761e0"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CATEGORY: {{ $('Extract Files').first().json.category }}\nFOCUS AREA: {{ $('Extract Files').first().json.focus }}\n\n=== FOUNDATION ALREADY WRITTEN FOR THIS REPORT (stay consistent with it) ===\n{{ ($('Foundation Generator').first().json.output || '').slice(0, 1600) }}\n\n=== SOURCE: MARKET / TREND ANALYSIS REPORT (P2) ===\n{{ $('Extract Files').first().json.p2_content }}\n\n=== SOURCE: COMPETITOR ANALYSIS REPORT (P3) ===\n{{ $('Extract Files').first().json.p3_content }}\n\n=== FIGURES ALREADY PULLED FROM THOSE REPORTS (cite these; do not invent others) ===\nMarket percentages: {{ JSON.stringify($('Extract Files').first().json.p2_stats.percentages) }}\nMarket prices: {{ JSON.stringify($('Extract Files').first().json.p2_stats.prices) }}\nCompetitor percentages: {{ JSON.stringify($('Extract Files').first().json.p3_stats.percentages) }}\nCompetitor prices: {{ JSON.stringify($('Extract Files').first().json.p3_stats.prices) }}\n\nReturn the JSON object described in your instructions. Nothing else.",
+        "options": {
+          "systemMessage": "=You are a senior content strategist at Wayfair, writing the content-ideas and social-caption sections of a strategy report.\n\nTASK: Produce six content ideas and a set of ready-to-use social captions, each traceable to a finding in the source reports.\n\nEVIDENCE RULES (non-negotiable):\n- Draw only on the two reports supplied in the user message. No outside knowledge, no assumed figures.\n- Every number you cite must actually appear in the source text. The extracted-figures list is there so you can find real ones quickly.\n- If the sources are thin or empty, say so plainly and scale back your claims. Never invent data to fill out the shape.\n\nOUTPUT RULES (non-negotiable):\n- Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no trailing commentary.\n- Use double quotes throughout. Do not use trailing commas.\n- Respect every length limit below. They exist so the response never gets truncated mid-object.\n\nRETURN EXACTLY THIS SHAPE:\n{\n  \"content_ideas\": [\n    {\"type\": \"Blog Post\", \"title\": \"...\", \"description\": \"...\", \"data_connection\": \"...\", \"seo_keywords\": [\"...\", \"...\"]}\n  ],\n  \"social_captions\": {\n    \"instagram\": [{\"caption\": \"...\", \"hashtags\": [\"#tag\"]}],\n    \"pinterest\": [{\"title\": \"...\", \"description\": \"...\"}],\n    \"facebook\": [{\"post\": \"...\"}],\n    \"tiktok\": [{\"hook\": \"...\", \"script\": \"...\"}]\n  }\n}\n\nLIMITS:\n- content_ideas: exactly 6, one each of Blog Post, Instagram Carousel, Video, Pinterest Pin, Buying Guide, Email Series, in that order.\n  - title max 80 characters, description max 220 characters, data_connection max 130 characters and must name the specific figure or gap it draws on.\n  - seo_keywords: up to 3 per idea, lowercase, no hashes. Use [] for formats where search keywords don't apply.\n- social_captions: 2 instagram, 1 pinterest, 1 facebook, 1 tiktok.\n  - Captions max 260 characters. Hashtags max 5 per post.\n  - Captions are consumer-facing: warm, conversational, never pushy. Invite rather than instruct.\n\n=== WAYFAIR BRAND VOICE — APPLIES TO EVERY WORD YOU WRITE ===\n\nWrite as Wayfair. Three qualities define the voice:\n\n1. FRIENDLY — Warm, human, plain-spoken. Write like a knowledgeable colleague sitting next to the reader, not a consulting deck. Use contractions (\"you'll\", \"it's\", \"we're\"). Address the reader as \"you\" and Wayfair as \"we\". Explain jargon the first time you use it.\n\n2. PROFESSIONAL — Every claim is anchored to something real: a number, a price band, a material, a competitor listing, an observation from the data you were given. Confident but never boastful. Banned hype words: game-changing, revolutionary, unlock, leverage, synergy, supercharge, disrupt, must-have, seamless, cutting-edge, world-class.\n\n3. GUIDING, NOT DEMANDING — Offer direction the reader can act on, and show the reasoning so they can decide for themselves. You are handing someone a map, not orders.\n   USE: \"Consider leading with...\", \"It's worth testing...\", \"The data points toward...\", \"You might start with...\", \"One option is...\", \"If X matters most to you, then...\"\n   AVOID: \"You must\", \"Immediately\", \"Failure to act will...\", \"It is critical that you\", \"Never\", \"Always\", any ultimatum or scare framing.\n\nSTYLE RULES:\n- Keep sentences under ~25 words. Keep paragraphs to 2-4 sentences.\n- Give the \"why\" before the \"what\" so the reader can follow the logic.\n- Be specific over generic: name the number, the material, the price band, the competitor.\n- No exclamation marks in analysis prose. No rhetorical questions. No dramatic one-line paragraphs.\n- Be honest about confidence. Say \"early signal\" or \"based on 40 listings\" rather than overstating a thin sample.\n- Never invent a statistic. If the data does not support a number, describe the direction qualitatively instead.\n\nCRITICAL: This voice guidance changes the WORDING ONLY. Do not alter the required output format, structure, JSON keys, HTML tags, or class names specified above. Return exactly the structure requested.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        832,
+        0
+      ],
+      "id": "e4a11efa-9a37-44c6-9ccf-bf5e7c49b293",
+      "name": "Content & Social Generator"
+    },
+    {
+      "parameters": {
+        "model": "mistral-small-latest",
+        "options": {
+          "maxTokens": 3400,
+          "temperature": 0.65
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        800,
+        224
+      ],
+      "id": "193052c1-d1d6-4112-8afc-7df0d361cf81",
+      "name": "Mistral - Content",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "sK3ROiCiSymgCqpD",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1024,
+        0
+      ],
+      "id": "cd526923-34a1-42f7-ab47-9dbed4d2f24d",
+      "name": "Wait 2",
+      "webhookId": "7f04154d-5cde-4f26-8924-12073f431aff"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CATEGORY: {{ $('Extract Files').first().json.category }}\nFOCUS AREA: {{ $('Extract Files').first().json.focus }}\n\n=== FOUNDATION ALREADY WRITTEN FOR THIS REPORT (stay consistent with it) ===\n{{ ($('Foundation Generator').first().json.output || '').slice(0, 1600) }}\n\n=== SOURCE: MARKET / TREND ANALYSIS REPORT (P2) ===\n{{ $('Extract Files').first().json.p2_content }}\n\n=== SOURCE: COMPETITOR ANALYSIS REPORT (P3) ===\n{{ $('Extract Files').first().json.p3_content }}\n\n=== FIGURES ALREADY PULLED FROM THOSE REPORTS (cite these; do not invent others) ===\nMarket percentages: {{ JSON.stringify($('Extract Files').first().json.p2_stats.percentages) }}\nMarket prices: {{ JSON.stringify($('Extract Files').first().json.p2_stats.prices) }}\nCompetitor percentages: {{ JSON.stringify($('Extract Files').first().json.p3_stats.percentages) }}\nCompetitor prices: {{ JSON.stringify($('Extract Files').first().json.p3_stats.prices) }}\n\nReturn the JSON object described in your instructions. Nothing else.",
+        "options": {
+          "systemMessage": "=You are a senior content strategist at Wayfair, writing the campaign-concepts and email sections of a strategy report.\n\nTASK: Produce three campaign concepts and six email subject lines.\n\nEVIDENCE RULES (non-negotiable):\n- Draw only on the two reports supplied in the user message. No outside knowledge, no assumed figures.\n- Every number you cite must actually appear in the source text. The extracted-figures list is there so you can find real ones quickly.\n- If the sources are thin or empty, say so plainly and scale back your claims. Never invent data to fill out the shape.\n\nOUTPUT RULES (non-negotiable):\n- Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no trailing commentary.\n- Use double quotes throughout. Do not use trailing commas.\n- Respect every length limit below. They exist so the response never gets truncated mid-object.\n\nRETURN EXACTLY THIS SHAPE:\n{\n  \"campaigns\": [\n    {\"name\": \"...\", \"tagline\": \"...\", \"description\": \"...\",\n     \"details\": {\"content_pillars\": \"...\", \"format\": \"...\", \"competitive_angle\": \"...\", \"seo_opportunity\": \"...\"}}\n  ],\n  \"email_subjects\": [\n    {\"icon\": \"\\ud83c\\udf3f\", \"subject\": \"...\", \"open_rate\": \"high\"}\n  ]\n}\n\nLIMITS:\n- campaigns: exactly 3. name max 40 characters. tagline max 60 characters. description max 240 characters.\n  - details: exactly 4 key/value pairs, each value max 150 characters. Keys are lowercase with underscores.\n- email_subjects: exactly 6. subject max 65 characters (so it isn't clipped in an inbox). open_rate is \"high\" or \"medium\".\n  - icon is a single emoji character.\n  - Subject lines should read as an invitation, not a command. Prefer curiosity and usefulness over urgency. No all-caps, no \"ACT NOW\", no fake scarcity.\n\n=== WAYFAIR BRAND VOICE — APPLIES TO EVERY WORD YOU WRITE ===\n\nWrite as Wayfair. Three qualities define the voice:\n\n1. FRIENDLY — Warm, human, plain-spoken. Write like a knowledgeable colleague sitting next to the reader, not a consulting deck. Use contractions (\"you'll\", \"it's\", \"we're\"). Address the reader as \"you\" and Wayfair as \"we\". Explain jargon the first time you use it.\n\n2. PROFESSIONAL — Every claim is anchored to something real: a number, a price band, a material, a competitor listing, an observation from the data you were given. Confident but never boastful. Banned hype words: game-changing, revolutionary, unlock, leverage, synergy, supercharge, disrupt, must-have, seamless, cutting-edge, world-class.\n\n3. GUIDING, NOT DEMANDING — Offer direction the reader can act on, and show the reasoning so they can decide for themselves. You are handing someone a map, not orders.\n   USE: \"Consider leading with...\", \"It's worth testing...\", \"The data points toward...\", \"You might start with...\", \"One option is...\", \"If X matters most to you, then...\"\n   AVOID: \"You must\", \"Immediately\", \"Failure to act will...\", \"It is critical that you\", \"Never\", \"Always\", any ultimatum or scare framing.\n\nSTYLE RULES:\n- Keep sentences under ~25 words. Keep paragraphs to 2-4 sentences.\n- Give the \"why\" before the \"what\" so the reader can follow the logic.\n- Be specific over generic: name the number, the material, the price band, the competitor.\n- No exclamation marks in analysis prose. No rhetorical questions. No dramatic one-line paragraphs.\n- Be honest about confidence. Say \"early signal\" or \"based on 40 listings\" rather than overstating a thin sample.\n- Never invent a statistic. If the data does not support a number, describe the direction qualitatively instead.\n\nCRITICAL: This voice guidance changes the WORDING ONLY. Do not alter the required output format, structure, JSON keys, HTML tags, or class names specified above. Return exactly the structure requested.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "54015d7e-92b5-45d3-810e-fe6a3d99a317",
+      "name": "Campaigns & Email Generator"
+    },
+    {
+      "parameters": {
+        "model": "mistral-small-latest",
+        "options": {
+          "maxTokens": 2600,
+          "temperature": 0.6
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        1184,
+        224
+      ],
+      "id": "caa0d168-35e0-4ed7-90cd-618ff1cfdf31",
+      "name": "Mistral - Campaigns",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "sK3ROiCiSymgCqpD",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 3
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1408,
+        0
+      ],
+      "id": "b1a39fbd-4fbf-403d-815d-ce761c8e336f",
+      "name": "Wait 3",
+      "webhookId": "24fd7f35-731a-406b-b457-7a983419867b"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=CATEGORY: {{ $('Extract Files').first().json.category }}\nFOCUS AREA: {{ $('Extract Files').first().json.focus }}\n\n=== FOUNDATION ALREADY WRITTEN FOR THIS REPORT (stay consistent with it) ===\n{{ ($('Foundation Generator').first().json.output || '').slice(0, 1600) }}\n\n=== CONTENT IDEAS ALREADY PROPOSED (your priorities should point at these) ===\n{{ ($('Content & Social Generator').first().json.output || '').slice(0, 1200) }}\n\n=== SOURCE: MARKET / TREND ANALYSIS REPORT (P2) ===\n{{ $('Extract Files').first().json.p2_content }}\n\n=== SOURCE: COMPETITOR ANALYSIS REPORT (P3) ===\n{{ $('Extract Files').first().json.p3_content }}\n\n=== FIGURES ALREADY PULLED FROM THOSE REPORTS (cite these; do not invent others) ===\nMarket percentages: {{ JSON.stringify($('Extract Files').first().json.p2_stats.percentages) }}\nMarket prices: {{ JSON.stringify($('Extract Files').first().json.p2_stats.prices) }}\nCompetitor percentages: {{ JSON.stringify($('Extract Files').first().json.p3_stats.percentages) }}\nCompetitor prices: {{ JSON.stringify($('Extract Files').first().json.p3_stats.prices) }}\n\nReturn the JSON object described in your instructions. Nothing else.",
+        "options": {
+          "systemMessage": "=You are a senior content strategist at Wayfair, writing the closing sections of a strategy report: competitive angles and a suggested starting order.\n\nTASK: Produce three competitive content angles and four prioritised next steps.\n\nEVIDENCE RULES (non-negotiable):\n- Draw only on the two reports supplied in the user message. No outside knowledge, no assumed figures.\n- Every number you cite must actually appear in the source text. The extracted-figures list is there so you can find real ones quickly.\n- If the sources are thin or empty, say so plainly and scale back your claims. Never invent data to fill out the shape.\n\nOUTPUT RULES (non-negotiable):\n- Return ONE valid JSON object and nothing else. No markdown fences, no preamble, no trailing commentary.\n- Use double quotes throughout. Do not use trailing commas.\n- Respect every length limit below. They exist so the response never gets truncated mid-object.\n\nRETURN EXACTLY THIS SHAPE:\n{\n  \"competitive_angles\": [\n    {\"title\": \"...\", \"competitor_gap\": \"...\", \"wayfair_opportunity\": \"...\"}\n  ],\n  \"content_priorities\": [\n    {\"priority\": 1, \"title\": \"...\", \"rationale\": \"...\"}\n  ]\n}\n\nLIMITS:\n- competitive_angles: exactly 3. title max 60 characters. competitor_gap max 240 characters, and it must reference something observed in the competitor report. wayfair_opportunity max 240 characters.\n- content_priorities: exactly 4, numbered 1 to 4. title max 70 characters. rationale max 220 characters.\n  - The rationale explains WHY this sits where it does, so the reader can re-order it if their situation differs. Frame these as a suggested sequence, not a mandate.\n\n=== WAYFAIR BRAND VOICE — APPLIES TO EVERY WORD YOU WRITE ===\n\nWrite as Wayfair. Three qualities define the voice:\n\n1. FRIENDLY — Warm, human, plain-spoken. Write like a knowledgeable colleague sitting next to the reader, not a consulting deck. Use contractions (\"you'll\", \"it's\", \"we're\"). Address the reader as \"you\" and Wayfair as \"we\". Explain jargon the first time you use it.\n\n2. PROFESSIONAL — Every claim is anchored to something real: a number, a price band, a material, a competitor listing, an observation from the data you were given. Confident but never boastful. Banned hype words: game-changing, revolutionary, unlock, leverage, synergy, supercharge, disrupt, must-have, seamless, cutting-edge, world-class.\n\n3. GUIDING, NOT DEMANDING — Offer direction the reader can act on, and show the reasoning so they can decide for themselves. You are handing someone a map, not orders.\n   USE: \"Consider leading with...\", \"It's worth testing...\", \"The data points toward...\", \"You might start with...\", \"One option is...\", \"If X matters most to you, then...\"\n   AVOID: \"You must\", \"Immediately\", \"Failure to act will...\", \"It is critical that you\", \"Never\", \"Always\", any ultimatum or scare framing.\n\nSTYLE RULES:\n- Keep sentences under ~25 words. Keep paragraphs to 2-4 sentences.\n- Give the \"why\" before the \"what\" so the reader can follow the logic.\n- Be specific over generic: name the number, the material, the price band, the competitor.\n- No exclamation marks in analysis prose. No rhetorical questions. No dramatic one-line paragraphs.\n- Be honest about confidence. Say \"early signal\" or \"based on 40 listings\" rather than overstating a thin sample.\n- Never invent a statistic. If the data does not support a number, describe the direction qualitatively instead.\n\nCRITICAL: This voice guidance changes the WORDING ONLY. Do not alter the required output format, structure, JSON keys, HTML tags, or class names specified above. Return exactly the structure requested.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1584,
+        0
+      ],
+      "id": "4cc38f6b-de81-4d51-a6f0-a9acf65e1c74",
+      "name": "Competitive & Priorities Generator"
+    },
+    {
+      "parameters": {
+        "model": "mistral-small-latest",
+        "options": {
+          "maxTokens": 2200,
+          "temperature": 0.45
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatMistralCloud",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        224
+      ],
+      "id": "508e6974-af30-49d0-9a43-675d7afa9e52",
+      "name": "Mistral - Competitive",
+      "credentials": {
+        "mistralCloudApi": {
+          "id": "sK3ROiCiSymgCqpD",
+          "name": "Mistral Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// COLLECT SECTIONS  (replaces \"Parse Content\")\n// Reads the four section agents, parses each independently, and\n// repairs a truncated JSON object rather than throwing the whole\n// report away.  A failure in one section no longer wipes out the\n// other three.\n// ============================================================\n\nconst src = $('Extract Files').first().json;\n\nfunction tryParse(s) {\n  try { return JSON.parse(s); } catch (e) { return null; }\n}\n\n// Walks the string tracking string-literal state so braces inside\n// quoted text don't confuse the depth counter.\nfunction extractJson(raw) {\n  if (!raw) return null;\n  let s = String(raw).replace(/```json/gi, '').replace(/```/g, '').trim();\n\n  const start = s.indexOf('{');\n  if (start === -1) return null;\n  s = s.slice(start);\n\n  // pass 1 — find a properly balanced object\n  let depth = 0, inStr = false, esc = false, end = -1;\n  for (let i = 0; i < s.length; i++) {\n    const ch = s[i];\n    if (esc) { esc = false; continue; }\n    if (ch === '\\\\') { esc = true; continue; }\n    if (ch === '\"') { inStr = !inStr; continue; }\n    if (inStr) continue;\n    if (ch === '{' || ch === '[') depth++;\n    else if (ch === '}' || ch === ']') {\n      depth--;\n      if (depth === 0) { end = i; break; }\n    }\n  }\n  if (end !== -1) {\n    const parsed = tryParse(s.slice(0, end + 1));\n    if (parsed) return parsed;\n  }\n\n  // pass 2 — output was truncated. Cut back to the last safe comma\n  // at shallow depth, then close whatever is still open.\n  const cuts = [];\n  let st = [], is = false, es = false;\n  for (let i = 0; i < s.length; i++) {\n    const ch = s[i];\n    if (es) { es = false; continue; }\n    if (ch === '\\\\') { es = true; continue; }\n    if (ch === '\"') { is = !is; continue; }\n    if (is) continue;\n    if (ch === '{' || ch === '[') st.push(ch);\n    else if (ch === '}' || ch === ']') st.pop();\n    else if (ch === ',' && st.length <= 3) cuts.push(i);\n  }\n  cuts.push(s.length);\n\n  for (let n = cuts.length - 1; n >= 0 && n >= cuts.length - 40; n--) {\n    let frag = s.slice(0, cuts[n]);\n    let stack = [], inS = false, e2 = false;\n    for (let i = 0; i < frag.length; i++) {\n      const c = frag[i];\n      if (e2) { e2 = false; continue; }\n      if (c === '\\\\') { e2 = true; continue; }\n      if (c === '\"') { inS = !inS; continue; }\n      if (inS) continue;\n      if (c === '{' || c === '[') stack.push(c);\n      else if (c === '}' || c === ']') stack.pop();\n    }\n    if (inS) frag += '\"';\n    frag = frag.replace(/[,\\s]+$/, '');\n    frag = frag.replace(/:\\s*$/, ': null');\n    while (stack.length) frag += (stack.pop() === '{' ? '}' : ']');\n    const parsed = tryParse(frag);\n    if (parsed) return parsed;\n  }\n  return null;\n}\n\nfunction readAgent(nodeName) {\n  try {\n    const j = $(nodeName).first().json;\n    const raw = j.output || j.text || j.response || '';\n    return extractJson(raw);\n  } catch (e) {\n    return null;\n  }\n}\n\nconst foundation = readAgent('Foundation Generator') || {};\nconst contentSocial = readAgent('Content & Social Generator') || {};\nconst campaignsEmail = readAgent('Campaigns & Email Generator') || {};\nconst competitive = readAgent('Competitive & Priorities Generator') || {};\n\n// Assemble. Missing pieces stay empty — we surface that honestly in the\n// report instead of silently substituting invented placeholder data.\nconst content = {\n  key_metrics: foundation.key_metrics || [],\n  data_foundation: foundation.data_foundation || { p2_insights: [], p3_insights: [] },\n  executive_summary: foundation.executive_summary || '',\n  content_ideas: contentSocial.content_ideas || [],\n  social_captions: contentSocial.social_captions || {},\n  campaigns: campaignsEmail.campaigns || [],\n  email_subjects: campaignsEmail.email_subjects || [],\n  competitive_angles: competitive.competitive_angles || [],\n  content_priorities: competitive.content_priorities || []\n};\n\nconst incomplete = [];\nif (!content.executive_summary) incomplete.push('Executive Summary');\nif (!content.key_metrics.length) incomplete.push('Key Metrics');\nif (!content.content_ideas.length) incomplete.push('Content Ideas');\nif (!Object.keys(content.social_captions).length) incomplete.push('Social Captions');\nif (!content.campaigns.length) incomplete.push('Campaign Concepts');\nif (!content.email_subjects.length) incomplete.push('Email Subject Lines');\nif (!content.competitive_angles.length) incomplete.push('Competitive Angles');\nif (!content.content_priorities.length) incomplete.push('Content Priorities');\n\nreturn [{\n  json: {\n    content,\n    category: src.category,\n    focus: src.focus,\n    source_status: src.source_status,\n    incomplete_sections: incomplete\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1824,
+        0
+      ],
+      "id": "f3a3c42c-6db0-493f-898e-f5bb8c30c6c0",
+      "name": "Collect Sections"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// BUILD HTML  (rewritten)\n// Fixes: grid tracks that couldn't shrink (clipped cards), flex rows\n// that pushed badges off-screen, no word wrapping on long strings,\n// no print/PDF rules (cards were sliced across page breaks).\n// Adds: contents nav, data-quality banner, Wayfair-voice section copy.\n// ============================================================\n\nconst data = $input.first().json;\nconst c = data.content || {};\nconst category = data.category || 'Area Rug';\nconst focus = data.focus || '';\nconst status = data.source_status || {};\nconst incomplete = data.incomplete_sections || [];\nconst today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });\n\nconst esc = s => String(s === null || s === undefined ? '' : s)\n  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n\nconst has = a => Array.isArray(a) && a.length > 0;\n\n// friendly note shown when a section didn't come back from the model\nconst emptyNote = (what) => `<div class=\"empty-note\">We weren't able to generate the ${esc(what)} section this run. Re-running the workflow usually resolves it — everything else below is complete.</div>`;\n\n// ---------- Key metrics ----------\nconst metrics = c.key_metrics || [];\nconst metricsHtml = has(metrics) ? metrics.map(m => `\n  <div class=\"insight-card\">\n    <div class=\"number\">${esc(m.value)}</div>\n    <div class=\"label\">${esc(m.label)}</div>\n    ${m.source ? `<div class=\"src\">from ${esc(m.source)}</div>` : ''}\n  </div>`).join('') : '';\n\n// ---------- Data foundation ----------\nconst df = c.data_foundation || {};\nconst p2List = (df.p2_insights || []).map(i => `<li>${esc(i)}</li>`).join('');\nconst p3List = (df.p3_insights || []).map(i => `<li>${esc(i)}</li>`).join('');\n\n// ---------- Content ideas ----------\nconst ideas = c.content_ideas || [];\nconst ideasHtml = ideas.map(i => {\n  const kws = (i.seo_keywords || []).map(k => `<span class=\"keyword\">${esc(k)}</span>`).join('');\n  return `\n  <article class=\"content-card\">\n    <div class=\"content-card-header\">\n      <div class=\"type\">${esc(i.type)}</div>\n      <h4>${esc(i.title)}</h4>\n    </div>\n    <div class=\"content-card-body\">\n      <p>${esc(i.description)}</p>\n      ${i.data_connection ? `<div class=\"data-tag\"><span aria-hidden=\"true\">&#128202;</span> ${esc(i.data_connection)}</div>` : ''}\n      ${kws ? `<div class=\"keywords\">${kws}</div>` : ''}\n    </div>\n  </article>`;\n}).join('');\n\n// ---------- Social captions ----------\nconst soc = c.social_captions || {};\nconst igHtml = (soc.instagram || []).map(p => `\n  <div class=\"social-post\">\n    <div class=\"platform-badge ig\">Instagram</div>\n    <p>${esc(p.caption)}</p>\n    ${(p.hashtags || []).length ? `<div class=\"hashtags\">${esc((p.hashtags || []).join(' '))}</div>` : ''}\n  </div>`).join('');\nconst pinHtml = (soc.pinterest || []).map(p => `\n  <div class=\"social-post\">\n    <div class=\"platform-badge pin\">Pinterest</div>\n    <p><strong>${esc(p.title)}</strong></p>\n    <p>${esc(p.description)}</p>\n  </div>`).join('');\nconst fbHtml = (soc.facebook || []).map(p => `\n  <div class=\"social-post\">\n    <div class=\"platform-badge fb\">Facebook</div>\n    <p>${esc(p.post)}</p>\n  </div>`).join('');\nconst ttHtml = (soc.tiktok || []).map(p => `\n  <div class=\"social-post\">\n    <div class=\"platform-badge tt\">TikTok</div>\n    <p><strong>Hook:</strong> ${esc(p.hook)}</p>\n    <p>${esc(p.script)}</p>\n  </div>`).join('');\nconst socialHtml = igHtml + pinHtml + fbHtml + ttHtml;\n\n// ---------- Campaigns ----------\nconst camps = c.campaigns || [];\nconst campsHtml = camps.map(camp => {\n  const det = camp.details || {};\n  const detailsHtml = Object.entries(det).map(([k, v]) => `\n    <div class=\"campaign-detail\">\n      <h5>${esc(k.replace(/_/g, ' ').replace(/\\b\\w/g, ch => ch.toUpperCase()))}</h5>\n      <p>${esc(v)}</p>\n    </div>`).join('');\n  return `\n  <div class=\"campaign-card\">\n    <h4>${esc(camp.name)}</h4>\n    ${camp.tagline ? `<div class=\"tagline\">&ldquo;${esc(camp.tagline)}&rdquo;</div>` : ''}\n    <p>${esc(camp.description)}</p>\n    ${detailsHtml ? `<div class=\"campaign-details\">${detailsHtml}</div>` : ''}\n  </div>`;\n}).join('');\n\n// ---------- Email subjects ----------\nconst emails = c.email_subjects || [];\nconst emailsHtml = emails.map(e => {\n  const high = String(e.open_rate || '').toLowerCase() === 'high';\n  return `\n  <div class=\"email-subject\">\n    <span class=\"icon\" aria-hidden=\"true\">${esc(e.icon || '\\u2709\\uFE0F')}</span>\n    <span class=\"subject-text\">${esc(e.subject)}</span>\n    <span class=\"open-rate ${high ? 'high' : 'medium'}\">${high ? 'Higher' : 'Steady'} open potential</span>\n  </div>`;\n}).join('');\n\n// ---------- Competitive angles ----------\nconst angles = c.competitive_angles || [];\nconst anglesHtml = angles.map(a => `\n  <div class=\"competitive-angle\">\n    <h4>${esc(a.title)}</h4>\n    <p><span class=\"tag gap\">Where competitors leave room</span> ${esc(a.competitor_gap)}</p>\n    <p><span class=\"tag opp\">Where we can help</span> ${esc(a.wayfair_opportunity)}</p>\n  </div>`).join('');\n\n// ---------- Priorities ----------\nconst priorities = c.content_priorities || [];\nconst prioritiesHtml = priorities.map(p => `\n  <div class=\"recommendation\">\n    <div class=\"priority ${Number(p.priority) <= 2 ? 'high' : 'medium'}\">${esc(p.priority)}</div>\n    <div class=\"recommendation-content\">\n      <h4>${esc(p.title)}</h4>\n      <p>${esc(p.rationale)}</p>\n    </div>\n  </div>`).join('');\n\n// ---------- Data-quality banner ----------\nlet banner = '';\nif (status && status.ok === false && (status.missing || []).length) {\n  banner = `<div class=\"banner warn\">\n    <strong>A heads-up before you read on.</strong>\n    We couldn't read the following upload${status.missing.length > 1 ? 's' : ''}: ${esc(status.missing.join(', '))}.\n    The strategy below is built only on what came through, so treat it as directional.\n    Re-uploading the HTML report${status.missing.length > 1 ? 's' : ''} and re-running will give you a fuller picture.\n  </div>`;\n}\nif (incomplete.length) {\n  banner += `<div class=\"banner info\">\n    <strong>Partial run.</strong> ${esc(incomplete.join(', '))} came back empty this time.\n    Everything else on this page is complete, and a re-run will usually fill the gap.\n  </div>`;\n}\n\n// ---------- Contents nav ----------\nconst navItems = [\n  ['summary', 'Executive Summary', true],\n  ['foundation', 'What the Data Shows', !!(p2List || p3List)],\n  ['ideas', 'Content Ideas', has(ideas)],\n  ['social', 'Social Captions', !!socialHtml],\n  ['campaigns', 'Campaign Concepts', has(camps)],\n  ['email', 'Email Subject Lines', has(emails)],\n  ['angles', 'Competitive Angles', has(angles)],\n  ['priorities', 'Where to Start', has(priorities)]\n].filter(x => x[2]).map(x => `<a href=\"#${x[0]}\">${esc(x[1])}</a>`).join('');\n\nconst html = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>Content Strategy | Wayfair ${esc(category)}</title>\n<style>\n  :root {\n    --brand: #7B2D8E;\n    --brand-dark: #5E1A6E;\n    --brand-light: #9B4DB8;\n    --brand-tint: #F4ECF7;\n    --ink: #2B2B33;\n    --ink-soft: #5A5A66;\n    --line: #E4E0E8;\n    --bg: #F7F6F9;\n    --card: #FFFFFF;\n  }\n\n  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }\n\n  html, body { max-width: 100%; overflow-x: hidden; }\n\n  body {\n    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;\n    line-height: 1.65;\n    color: var(--ink);\n    background: var(--bg);\n    -webkit-font-smoothing: antialiased;\n  }\n\n  /* Long words, URLs and hashtag runs wrap instead of overflowing. */\n  h1, h2, h3, h4, h5, p, li, td, th, span, div {\n    overflow-wrap: anywhere;\n    word-break: break-word;\n  }\n\n  img, svg, table, pre { max-width: 100%; height: auto; }\n  pre { white-space: pre-wrap; }\n\n  .container { max-width: 1080px; margin: 0 auto; padding: 24px 20px 48px; }\n\n  /* ---------- Header ---------- */\n  .header {\n    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);\n    color: #fff; padding: 40px 36px; border-radius: 14px; margin-bottom: 24px;\n  }\n  .header h1 { font-size: clamp(1.6rem, 4vw, 2.2rem); line-height: 1.25; margin-bottom: 8px; font-weight: 700; }\n  .header .subtitle { font-size: clamp(1rem, 2.2vw, 1.15rem); opacity: .92; }\n  .header .meta { margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; }\n  .header .meta-item {\n    background: rgba(255,255,255,.16); padding: 7px 14px; border-radius: 999px;\n    font-size: .85rem; white-space: nowrap;\n  }\n\n  /* ---------- Banners ---------- */\n  .banner { border-radius: 10px; padding: 16px 20px; margin-bottom: 18px; font-size: .95rem; line-height: 1.6; }\n  .banner.warn { background: #FEF6E7; border-left: 4px solid #E0A800; color: #6B4E00; }\n  .banner.info { background: var(--brand-tint); border-left: 4px solid var(--brand); color: var(--brand-dark); }\n\n  /* ---------- Contents nav ---------- */\n  .report-nav {\n    background: var(--card); border-radius: 12px; padding: 18px 22px; margin-bottom: 24px;\n    box-shadow: 0 1px 4px rgba(0,0,0,.06); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;\n  }\n  .report-nav .nav-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-soft); width: 100%; }\n  .report-nav a { color: var(--brand); text-decoration: none; font-size: .9rem; font-weight: 500; padding: 4px 10px; border-radius: 999px; background: var(--brand-tint); }\n  .report-nav a:hover { background: var(--brand); color: #fff; }\n\n  /* ---------- Sections ---------- */\n  .section {\n    background: var(--card); border-radius: 12px; padding: 30px 28px; margin-bottom: 22px;\n    box-shadow: 0 1px 4px rgba(0,0,0,.06); scroll-margin-top: 20px;\n  }\n  .section h2 {\n    color: var(--brand); font-size: 1.35rem; margin-bottom: 6px;\n    padding-bottom: 10px; border-bottom: 2px solid var(--brand-tint);\n  }\n  .section .lede { color: var(--ink-soft); margin: 12px 0 22px; font-size: .98rem; }\n  .empty-note {\n    background: var(--bg); border: 1px dashed var(--line); border-radius: 8px;\n    padding: 16px 18px; color: var(--ink-soft); font-size: .93rem;\n  }\n\n  /* ---------- Executive summary ---------- */\n  .exec-summary { border-left: 4px solid var(--brand); }\n  .exec-summary .summary-text { font-size: 1.02rem; white-space: pre-line; margin-bottom: 24px; }\n\n  /* Grid fix: minmax(0,...) lets tracks shrink; min-width:0 on children\n     stops one long word from forcing the whole card past its container. */\n  .key-insights {\n    display: grid; gap: 14px; margin-top: 8px;\n    grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));\n  }\n  .key-insights > * { min-width: 0; }\n  .insight-card {\n    background: var(--brand-tint); border: 1px solid var(--line); border-radius: 10px;\n    padding: 18px 14px; text-align: center;\n  }\n  .insight-card .number { font-size: clamp(1.4rem, 3.4vw, 2rem); font-weight: 700; color: var(--brand); line-height: 1.2; }\n  .insight-card .label { font-size: .82rem; color: var(--ink-soft); margin-top: 6px; }\n  .insight-card .src { font-size: .7rem; color: var(--ink-soft); opacity: .75; margin-top: 4px; }\n\n  /* ---------- Data foundation ---------- */\n  .data-sources { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }\n  .data-sources > * { min-width: 0; }\n  .data-source-card { background: var(--bg); border-radius: 10px; padding: 20px; }\n  .data-source-card h4 { color: var(--brand); margin-bottom: 10px; font-size: 1rem; }\n  .data-source-card ul { list-style: none; }\n  .data-source-card li { padding: 9px 0; border-bottom: 1px solid var(--line); font-size: .94rem; }\n  .data-source-card li:last-child { border-bottom: none; }\n\n  /* ---------- Content ideas ---------- */\n  .content-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }\n  .content-grid > * { min-width: 0; }\n  .content-card {\n    background: var(--card); border: 1px solid var(--line); border-radius: 10px;\n    display: flex; flex-direction: column; overflow: hidden;\n  }\n  .content-card-header { background: linear-gradient(135deg, var(--brand) 0%, var(--brand-light) 100%); color: #fff; padding: 15px 18px; }\n  .content-card-header .type { font-size: .7rem; text-transform: uppercase; letter-spacing: .1em; opacity: .9; }\n  .content-card-header h4 { font-size: 1.05rem; margin-top: 5px; line-height: 1.35; }\n  .content-card-body { padding: 18px; flex: 1 1 auto; min-width: 0; }\n  .content-card-body p { color: var(--ink-soft); margin-bottom: 14px; font-size: .94rem; }\n  .data-tag {\n    display: block; background: var(--brand-tint); color: var(--brand-dark);\n    padding: 8px 12px; border-radius: 8px; font-size: .82rem; line-height: 1.5;\n  }\n  .keywords { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }\n  .keyword { background: var(--bg); border: 1px solid var(--line); color: var(--ink-soft); padding: 4px 10px; border-radius: 999px; font-size: .78rem; }\n\n  /* ---------- Social ---------- */\n  .social-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); }\n  .social-grid > * { min-width: 0; }\n  .social-post { background: var(--bg); border-radius: 10px; padding: 16px; }\n  .platform-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: .72rem; font-weight: 600; color: #fff; margin-bottom: 10px; }\n  .platform-badge.ig { background: linear-gradient(45deg, #F09433, #DC2743); }\n  .platform-badge.pin { background: #E60023; }\n  .platform-badge.fb { background: #1877F2; }\n  .platform-badge.tt { background: #111; }\n  .social-post p { font-size: .93rem; margin-bottom: 8px; }\n  .hashtags { color: var(--brand); font-size: .84rem; }\n\n  /* ---------- Campaigns ---------- */\n  .campaign-card { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 24px; margin-bottom: 18px; }\n  .campaign-card h4 { color: var(--brand-dark); font-size: 1.2rem; margin-bottom: 6px; }\n  .campaign-card .tagline { color: var(--brand); font-style: italic; font-size: 1.02rem; margin-bottom: 14px; }\n  .campaign-card > p { margin-bottom: 18px; font-size: .96rem; }\n  .campaign-details { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }\n  .campaign-details > * { min-width: 0; }\n  .campaign-detail { background: var(--card); padding: 14px 16px; border-radius: 8px; border: 1px solid var(--line); }\n  .campaign-detail h5 { color: var(--brand); font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 7px; }\n  .campaign-detail p { font-size: .89rem; color: var(--ink-soft); }\n\n  /* ---------- Email subjects ---------- */\n  /* flex-wrap + min-width:0 stops long subjects pushing the badge off-screen */\n  .email-ideas { display: flex; flex-direction: column; gap: 10px; }\n  .email-subject {\n    display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;\n    background: var(--bg); padding: 14px 18px; border-radius: 10px;\n  }\n  .email-subject .icon { font-size: 1.25rem; flex-shrink: 0; }\n  .email-subject .subject-text { flex: 1 1 240px; min-width: 0; font-size: .97rem; }\n  .email-subject .open-rate {\n    flex-shrink: 0; background: #E4F3EA; color: #14724A;\n    padding: 5px 12px; border-radius: 999px; font-size: .76rem; font-weight: 600; white-space: nowrap;\n  }\n  .email-subject .open-rate.medium { background: #FDF2D8; color: #8A5A00; }\n\n  /* ---------- Competitive angles ---------- */\n  .competitive-angle { background: var(--bg); border-left: 4px solid var(--brand); padding: 20px; margin-bottom: 14px; border-radius: 0 10px 10px 0; }\n  .competitive-angle h4 { color: var(--brand-dark); margin-bottom: 12px; font-size: 1.05rem; }\n  .competitive-angle p { margin-bottom: 10px; font-size: .94rem; }\n  .tag { display: inline-block; font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 3px 9px; border-radius: 999px; margin-right: 6px; }\n  .tag.gap { background: #FDF2D8; color: #8A5A00; }\n  .tag.opp { background: var(--brand-tint); color: var(--brand-dark); }\n\n  /* ---------- Priorities ---------- */\n  .recommendation { display: flex; gap: 16px; margin-bottom: 14px; align-items: flex-start; }\n  .priority {\n    width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;\n    font-weight: 700; font-size: 1.1rem; color: #fff; flex-shrink: 0;\n  }\n  .priority.high { background: var(--brand); }\n  .priority.medium { background: var(--brand-light); }\n  .recommendation-content { flex: 1 1 auto; min-width: 0; background: var(--bg); padding: 16px 20px; border-radius: 10px; }\n  .recommendation-content h4 { color: var(--brand-dark); margin-bottom: 7px; font-size: 1.02rem; }\n  .recommendation-content p { font-size: .94rem; color: var(--ink-soft); }\n\n  /* ---------- Footer ---------- */\n  .footer { background: var(--brand-dark); color: #fff; padding: 28px; border-radius: 12px; text-align: center; margin-top: 26px; }\n  .footer .logo { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; }\n  .footer p { opacity: .88; font-size: .86rem; margin-top: 5px; }\n\n  /* ============ PRINT / SAVE AS PDF ============ */\n  @page { size: A4; margin: 14mm 12mm; }\n\n  @media print {\n    body { background: #fff; font-size: 10.5pt; }\n    .container { max-width: none; padding: 0; }\n    .report-nav { display: none; }\n\n    .section, .content-card, .campaign-card, .social-post, .recommendation,\n    .competitive-angle, .insight-card, .email-subject, .data-source-card,\n    .campaign-detail, .header, .footer, .banner {\n      break-inside: avoid; page-break-inside: avoid; box-shadow: none;\n    }\n    h1, h2, h3, h4 { break-after: avoid; page-break-after: avoid; }\n    .section { border: 1px solid var(--line); }\n    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }\n  }\n\n  /* ============ SMALL SCREENS ============ */\n  @media (max-width: 640px) {\n    .container { padding: 14px 12px 32px; }\n    .header { padding: 26px 20px; }\n    .section { padding: 22px 16px; }\n    .recommendation { gap: 12px; }\n  }\n</style>\n</head>\n<body>\n<div class=\"container\">\n\n  <header class=\"header\">\n    <h1>Content Strategy Report</h1>\n    <p class=\"subtitle\">Wayfair ${esc(category)}${focus ? ' &middot; ' + esc(focus) : ''}</p>\n    <div class=\"meta\">\n      <span class=\"meta-item\">${esc(today)}</span>\n      <span class=\"meta-item\">${metrics.length} data points</span>\n      <span class=\"meta-item\">${ideas.length} content ideas</span>\n      <span class=\"meta-item\">${camps.length} campaigns</span>\n    </div>\n  </header>\n\n  ${banner}\n\n  <nav class=\"report-nav\">\n    <span class=\"nav-label\">What's inside</span>\n    ${navItems}\n  </nav>\n\n  <section class=\"section exec-summary\" id=\"summary\">\n    <h2>Executive Summary</h2>\n    <p class=\"lede\">Here's the short version of what the market data and competitor review are telling us, and where we think the content opportunity sits.</p>\n    ${c.executive_summary ? `<div class=\"summary-text\">${esc(c.executive_summary)}</div>` : emptyNote('Executive Summary')}\n    ${metricsHtml ? `<div class=\"key-insights\">${metricsHtml}</div>` : ''}\n  </section>\n\n  ${(p2List || p3List) ? `\n  <section class=\"section\" id=\"foundation\">\n    <h2>What the Data Shows</h2>\n    <p class=\"lede\">These are the findings we pulled from your two source reports. Everything further down traces back to something on this list, so it's worth a quick read first.</p>\n    <div class=\"data-sources\">\n      <div class=\"data-source-card\">\n        <h4>From the market analysis</h4>\n        <ul>${p2List || '<li>No findings came through from this report.</li>'}</ul>\n      </div>\n      <div class=\"data-source-card\">\n        <h4>From the competitor analysis</h4>\n        <ul>${p3List || '<li>No findings came through from this report.</li>'}</ul>\n      </div>\n    </div>\n  </section>` : ''}\n\n  <section class=\"section\" id=\"ideas\">\n    <h2>Content Ideas</h2>\n    <p class=\"lede\">Each idea below is tied to a specific finding from your reports. Pick the ones that fit your calendar and capacity &mdash; they're designed to work on their own as well as together.</p>\n    ${has(ideas) ? `<div class=\"content-grid\">${ideasHtml}</div>` : emptyNote('Content Ideas')}\n  </section>\n\n  ${socialHtml ? `\n  <section class=\"section\" id=\"social\">\n    <h2>Social Captions</h2>\n    <p class=\"lede\">Ready to use as-is, or as a starting point you can adjust for tone and timing.</p>\n    <div class=\"social-grid\">${socialHtml}</div>\n  </section>` : ''}\n\n  ${has(camps) ? `\n  <section class=\"section\" id=\"campaigns\">\n    <h2>Campaign Concepts</h2>\n    <p class=\"lede\">Larger themes that bundle several pieces of content together. Each one gives you a reason to keep publishing on a topic for more than a single post.</p>\n    ${campsHtml}\n  </section>` : ''}\n\n  ${has(emails) ? `\n  <section class=\"section\" id=\"email\">\n    <h2>Email Subject Lines</h2>\n    <p class=\"lede\">Built around the themes with the strongest signal in the data. The open-rate notes are estimates, so treat them as a starting hypothesis to test rather than a forecast.</p>\n    <div class=\"email-ideas\">${emailsHtml}</div>\n  </section>` : ''}\n\n  ${has(angles) ? `\n  <section class=\"section\" id=\"angles\">\n    <h2>Competitive Angles</h2>\n    <p class=\"lede\">Places where competitors leave a gap, and how we could helpfully fill it. These are opportunities rather than obligations.</p>\n    ${anglesHtml}\n  </section>` : ''}\n\n  ${has(priorities) ? `\n  <section class=\"section\" id=\"priorities\">\n    <h2>Where to Start</h2>\n    <p class=\"lede\">If you only have bandwidth for a few things, this is the order we'd suggest, and the reasoning behind it. Adjust freely for what you know about your team and calendar.</p>\n    ${prioritiesHtml}\n  </section>` : ''}\n\n  <footer class=\"footer\">\n    <div class=\"logo\">Wayfair &middot; AI Insights &amp; Content Agent</div>\n    <p>Built from your Market Trend Discovery and Competitor Monitoring reports.</p>\n    <p>${esc(category)}${focus ? ' &middot; ' + esc(focus) : ''} &middot; ${esc(today)}</p>\n  </footer>\n\n</div>\n</body>\n</html>`;\n\nreturn [{ json: { html, category, focus } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2048,
+        0
+      ],
+      "id": "b495984c-f4fe-4b4f-aaa8-fde55d5bfc7e",
+      "name": "Build HTML"
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.html;\nconst cat = $input.first().json.category || 'Area Rug';\nconst ts = new Date().toISOString().split('T')[0];\nconst fileName = `Wayfair_${cat.replace(/\\s+/g, '_')}_Content_Strategy_${ts}.html`;\n\nreturn [{\n  json: { html, fileName },\n  binary: {\n    data: {\n      data: Buffer.from(html).toString('base64'),\n      mimeType: 'text/html',\n      fileName: fileName\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2272,
+        0
+      ],
+      "id": "922e10dd-7cb0-4e26-9b94-46794ca94ffe",
+      "name": "Download"
+    },
+    {
+      "parameters": {
+        "html": "{{ $json.html }}"
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        2480,
+        -16
+      ],
+      "id": "6d2b2443-bcc7-4b2b-83cc-b363d9fadfdf",
+      "name": "Preview"
+    },
+    {
+      "parameters": {
+        "content": "## Project 4 - Combined Report (v4)\n\n**What changed**\n\n**1. File uploads now actually read**\nForm Trigger stores files in BINARY, not json.\n\"Extract Files\" reads binary properly, so the\nAI finally sees your P2/P3 content.\n\n**2. One agent split into four**\nThe old single agent had to emit the whole\nreport inside a 6,000-token cap, so it was\ntruncated mid-JSON and silently swapped in\nhard-coded placeholder text.\nEach section now has its own agent + model.\n\n**3. Parsing survives truncation**\n\"Collect Sections\" repairs a cut-off JSON\nobject and parses each section separately.\nNo more all-or-nothing fallback.\n\n**4. Layout fixed**\nminmax(0,1fr) grids, word wrapping,\nflex-shrink on badges, and full print/PDF\nrules so cards aren't sliced across pages.\n\n**5. Wayfair brand voice**\nFriendly / professional / guiding, applied\nto every agent's system message.\n\nTip: the n8n Preview node crops long pages.\nOpen the downloaded .html for the full report.",
+        "height": 300,
+        "width": 280
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        224
+      ],
+      "id": "3d0302bc-fe3f-45a2-9465-85d3464eba11",
+      "name": "Notes"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Upload Form": {
+      "main": [
+        [
+          {
+            "node": "Extract Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Files": {
+      "main": [
+        [
+          {
+            "node": "Foundation Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Foundation Generator": {
+      "main": [
+        [
+          {
+            "node": "Wait 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1": {
+      "main": [
+        [
+          {
+            "node": "Content & Social Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content & Social Generator": {
+      "main": [
+        [
+          {
+            "node": "Wait 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2": {
+      "main": [
+        [
+          {
+            "node": "Campaigns & Email Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Campaigns & Email Generator": {
+      "main": [
+        [
+          {
+            "node": "Wait 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 3": {
+      "main": [
+        [
+          {
+            "node": "Competitive & Priorities Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Competitive & Priorities Generator": {
+      "main": [
+        [
+          {
+            "node": "Collect Sections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Sections": {
+      "main": [
+        [
+          {
+            "node": "Build HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HTML": {
+      "main": [
+        [
+          {
+            "node": "Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download": {
+      "main": [
+        [
+          {
+            "node": "Preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral - Foundation": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Foundation Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral - Content": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Content & Social Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral - Campaigns": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Campaigns & Email Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mistral - Competitive": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Competitive & Priorities Generator",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "291f7b7f-40c6-419d-940c-9d6c2959aa0c",
+  "meta": {
+    "instanceId": "bd1d7598cac6fe99d0125fdd1ce92d7779d4f60e0158c9d14cbaba03c06fc004"
+  },
+  "nodeGroups": [],
+  "id": "BQ75RQEvIJnrQK9Y",
+  "tags": []
+}
